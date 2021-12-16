@@ -9,17 +9,18 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Users struct {
 	gorm.Model
 	Firstname string
 	Lastname  string
-	Attach    []Files `gorm:"foreignKey:FileId"`
+	Attach    []Files `gorm:"foreignKey:Idx"`
 }
 
 type Files struct {
-	FileId    int    `json:"file_id"`
+	Idx       int    `json:"idx"`
 	FileBytes []byte `json:"file_bytes"`
 }
 
@@ -35,6 +36,7 @@ type ReqFiles struct {
 
 type UserRepository interface {
 	GetUsers() ([]Users, error)
+	GetUserById(int) (*Users, error)
 	CreateUser(Users) error
 }
 
@@ -63,22 +65,27 @@ func (r UserRepositoryDB) CreateUser(u Users) error {
 
 	return nil
 }
+
 func (r UserRepositoryDB) DeleteUserById(id int) error {
 	user := Users{}
+	files := Files{}
 
-	err := r.db.Delete(&user, "id = ?", id).Error
-	fmt.Printf("Err: %v", err)
-	if err != nil {
-		return err
-	}
+	r.db.Unscoped().Delete(&user, "id = ?", id)
+	r.db.Unscoped().Delete(&files, "file_id = ?", id)
 
 	return nil
 }
 
 func (r UserRepositoryDB) GetUsers() ([]Users, error) {
 	users := []Users{}
-	r.db.Find(&users)
+	r.db.Preload(clause.Associations).Find(&users)
 	return users, nil
+}
+func (r UserRepositoryDB) GetUserById(id int) (*Users, error) {
+	user := Users{}
+	r.db.Where("id = ?", id).Preload(clause.Associations).Find(&user)
+	fmt.Println(user)
+	return &user, nil
 }
 
 func main() {
@@ -100,6 +107,20 @@ func main() {
 		}
 		return c.JSON(u)
 	})
+	app.Get("/user/:id", func(c *fiber.Ctx) error {
+		id := c.Params("id")
+
+		i, err := strconv.Atoi(id)
+		if err != nil {
+			return c.SendStatus(fiber.StatusBadRequest)
+		}
+
+		u, err := userRepo.GetUserById(i)
+		if err != nil {
+			return c.SendStatus(fiber.StatusNotFound)
+		}
+		return c.JSON(u)
+	})
 
 	app.Post("/create", func(c *fiber.Ctx) error {
 		req := ReqUsers{}
@@ -115,7 +136,7 @@ func main() {
 			// fmt.Printf("Att: K:%v V:%v", k, v)
 			f := Files{
 				FileBytes: []byte(v.FileBytes),
-				FileId:    v.FileId,
+				Idx:       v.FileId,
 			}
 			files = append(files, f)
 		}
